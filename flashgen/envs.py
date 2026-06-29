@@ -11,8 +11,8 @@ if TYPE_CHECKING:
     LD_LIBRARY_PATH: str | None = None
     LOCAL_RANK: int = 0
     CUDA_VISIBLE_DEVICES: str | None = None
-    FLASHGEN_CACHE_ROOT: str = os.path.expanduser("~/.cache/fastvideo")
-    FLASHGEN_CONFIG_ROOT: str = os.path.expanduser("~/.config/fastvideo")
+    FLASHGEN_CACHE_ROOT: str = os.path.expanduser("~/.cache/flashgen")
+    FLASHGEN_CONFIG_ROOT: str = os.path.expanduser("~/.config/flashgen")
     FLASHGEN_CONFIGURE_LOGGING: int = 1
     FLASHGEN_RAY_PER_WORKER_GPUS: float = 1.0
     FLASHGEN_LOGGING_LEVEL: str = "INFO"
@@ -91,7 +91,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "NVCC_THREADS":
     lambda: os.getenv("NVCC_THREADS", None),
 
-    # If set, fastvideo will use precompiled binaries (*.so)
+    # If set, flashgen will use precompiled binaries (*.so)
     "FLASHGEN_USE_PRECOMPILED":
     lambda: bool(os.environ.get("FLASHGEN_USE_PRECOMPILED")) or bool(
         os.environ.get("FLASHGEN_PRECOMPILED_WHEEL_LOCATION")),
@@ -102,30 +102,30 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "CMAKE_BUILD_TYPE":
     lambda: os.getenv("CMAKE_BUILD_TYPE"),
 
-    # If set, fastvideo will print verbose logs during installation
+    # If set, flashgen will print verbose logs during installation
     "VERBOSE":
     lambda: bool(int(os.getenv('VERBOSE', '0'))),
 
-    # Root directory for FASTVIDEO configuration files
-    # Defaults to `~/.config/fastvideo` unless `XDG_CONFIG_HOME` is set
-    # Note that this not only affects how fastvideo finds its configuration files
-    # during runtime, but also affects how fastvideo installs its configuration
+    # Root directory for FLASHGEN configuration files
+    # Defaults to `~/.config/flashgen` unless `XDG_CONFIG_HOME` is set
+    # Note that this not only affects how flashgen finds its configuration files
+    # during runtime, but also affects how flashgen installs its configuration
     # files during **installation**.
     "FLASHGEN_CONFIG_ROOT":
     lambda: os.path.expanduser(
         os.getenv(
             "FLASHGEN_CONFIG_ROOT",
-            os.path.join(get_default_config_root(), "fastvideo"),
+            os.path.join(get_default_config_root(), "flashgen"),
         )),
 
     # ================== Runtime Env Vars ==================
 
-    # Root directory for FASTVIDEO cache files
-    # Defaults to `~/.cache/fastvideo` unless `XDG_CACHE_HOME` is set
+    # Root directory for FLASHGEN cache files
+    # Defaults to `~/.cache/flashgen` unless `XDG_CACHE_HOME` is set
     "FLASHGEN_CACHE_ROOT":
     lambda: os.path.expanduser(os.getenv(
         "FLASHGEN_CACHE_ROOT",
-        os.path.join(get_default_cache_root(), "fastvideo"),
+        os.path.join(get_default_cache_root(), "flashgen"),
     )),
 
     # used in distributed environment to determine the ip address
@@ -174,8 +174,8 @@ environment_variables: dict[str, Callable[[], Any]] = {
     lambda: int(os.environ.get("FLASHGEN_ENGINE_ITERATION_TIMEOUT_S", "60")),
 
     # Logging configuration
-    # If set to 0, fastvideo will not configure logging
-    # If set to 1, fastvideo will configure logging using the default configuration
+    # If set to 0, flashgen will not configure logging
+    # If set to 1, flashgen will configure logging using the default configuration
     #    or the configuration file specified by FLASHGEN_LOGGING_CONFIG_PATH
     "FLASHGEN_CONFIGURE_LOGGING":
     lambda: int(os.getenv("FLASHGEN_CONFIGURE_LOGGING", "1")),
@@ -191,7 +191,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     lambda: os.getenv("FLASHGEN_LOGGING_PREFIX", ""),
 
     # Trace function calls
-    # If set to 1, fastvideo will trace function calls
+    # If set to 1, flashgen will trace function calls
     # Useful for debugging
     "FLASHGEN_TRACE_FUNCTION":
     lambda: int(os.getenv("FLASHGEN_TRACE_FUNCTION", "0")),
@@ -266,13 +266,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "FLASHGEN_TRACE_STEPS":
     lambda: os.getenv("FLASHGEN_TRACE_STEPS", ""),
 
-    # If set, fastvideo will run in development mode, which will enable
+    # If set, flashgen will run in development mode, which will enable
     # some additional endpoints for developing and debugging,
     # e.g. `/reset_prefix_cache`
     "FLASHGEN_SERVER_DEV_MODE":
     lambda: bool(int(os.getenv("FLASHGEN_SERVER_DEV_MODE", "0"))),
 
-    # If set, fastvideo will enable stage logging, which will print the time
+    # If set, flashgen will enable stage logging, which will print the time
     # taken for each stage
     "FLASHGEN_STAGE_LOGGING":
     lambda: bool(int(os.getenv("FLASHGEN_STAGE_LOGGING", "0"))),

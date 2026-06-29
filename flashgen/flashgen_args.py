@@ -77,7 +77,7 @@ class WorkloadType(str, Enum):
         return [workload.value for workload in cls]
 
 
-# args for fastvideo framework
+# args for flashgen framework
 @dataclasses.dataclass
 class FlashgenArgs:
     # Model and path configuration (for convenience)
@@ -239,7 +239,7 @@ class FlashgenArgs:
         self._apply_ltx2_vae_overrides()
         self._resolve_refine_args()
         self._apply_transformer_quant()
-        self.check_fastvideo_args()
+        self.check_flashgen_args()
 
     def _apply_transformer_quant(self) -> None:
         """Pin the typed ``transformer_quant`` instance onto ``dit_config``.
@@ -696,7 +696,7 @@ class FlashgenArgs:
         valid_fields = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in kwargs.items() if k in valid_fields})
 
-    def check_fastvideo_args(self) -> None:
+    def check_flashgen_args(self) -> None:
         """Validate inference arguments for consistency"""
         from flashgen.platforms import current_platform
 
@@ -763,10 +763,10 @@ class FlashgenArgs:
             self.preprocess_config.check_preprocess_config()
 
 
-_current_fastvideo_args = None
+_current_flashgen_args = None
 
 
-def prepare_fastvideo_args(argv: list[str]) -> FlashgenArgs:
+def prepare_flashgen_args(argv: list[str]) -> FlashgenArgs:
     """
     Prepare the inference arguments from the command line arguments.
 
@@ -780,38 +780,38 @@ def prepare_fastvideo_args(argv: list[str]) -> FlashgenArgs:
     parser = FlexibleArgumentParser()
     FlashgenArgs.add_cli_args(parser)
     raw_args = parser.parse_args(argv)
-    fastvideo_args = FlashgenArgs.from_cli_args(raw_args)
-    global _current_fastvideo_args
-    _current_fastvideo_args = fastvideo_args
-    return fastvideo_args
+    flashgen_args = FlashgenArgs.from_cli_args(raw_args)
+    global _current_flashgen_args
+    _current_flashgen_args = flashgen_args
+    return flashgen_args
 
 
 @contextmanager
-def set_current_fastvideo_args(fastvideo_args: FlashgenArgs):
+def set_current_flashgen_args(flashgen_args: FlashgenArgs):
     """
-    Temporarily set the current fastvideo config.
+    Temporarily set the current flashgen config.
     Used during model initialization.
-    We save the current fastvideo config in a global variable,
+    We save the current flashgen config in a global variable,
     so that all modules can access it, e.g. custom ops
-    can access the fastvideo config to determine how to dispatch.
+    can access the flashgen config to determine how to dispatch.
     """
-    global _current_fastvideo_args
-    old_fastvideo_args = _current_fastvideo_args
+    global _current_flashgen_args
+    old_flashgen_args = _current_flashgen_args
     try:
-        _current_fastvideo_args = fastvideo_args
+        _current_flashgen_args = flashgen_args
         yield
     finally:
-        _current_fastvideo_args = old_fastvideo_args
+        _current_flashgen_args = old_flashgen_args
 
 
-def get_current_fastvideo_args() -> FlashgenArgs:
-    if _current_fastvideo_args is None:
+def get_current_flashgen_args() -> FlashgenArgs:
+    if _current_flashgen_args is None:
         # in ci, usually when we test custom ops/modules directly,
-        # we don't set the fastvideo config. In that case, we set a default
+        # we don't set the flashgen config. In that case, we set a default
         # config.
         # TODO(will): may need to handle this for CI.
-        raise ValueError("Current fastvideo args is not set.")
-    return _current_fastvideo_args
+        raise ValueError("Current flashgen args is not set.")
+    return _current_flashgen_args
 
 
 @dataclasses.dataclass

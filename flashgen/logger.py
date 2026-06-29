@@ -33,29 +33,29 @@ _DATE_FORMAT = "%m-%d %H:%M:%S"
 
 DEFAULT_LOGGING_CONFIG = {
     "formatters": {
-        "fastvideo": {
+        "flashgen": {
             "class": "flashgen.logging_utils.NewLineFormatter",
             "datefmt": _DATE_FORMAT,
             "format": _FORMAT,
         },
     },
     "handlers": {
-        "fastvideo": {
+        "flashgen": {
             "class": "logging.StreamHandler",
-            "formatter": "fastvideo",
+            "formatter": "flashgen",
             "level": FLASHGEN_LOGGING_LEVEL,
             "stream": "ext://sys.stdout",
         },
     },
     "loggers": {
-        "fastvideo": {
-            "handlers": ["fastvideo"],
+        "flashgen": {
+            "handlers": ["flashgen"],
             "level": "DEBUG",
             "propagate": False,
         },
     },
     "root": {
-        "handlers": ["fastvideo"],
+        "handlers": ["flashgen"],
         "level": "DEBUG",
     },
     "version": 1,
@@ -139,7 +139,7 @@ def _info(logger: Logger,
         logger.log(logging.INFO, msg, *args, stacklevel=2, **kwargs)
 
 
-class _FastvideoLogger(Logger):
+class _FlashgenLogger(Logger):
     """
     Note:
         This class is just to provide type information.
@@ -177,7 +177,7 @@ class _FastvideoLogger(Logger):
               **kwargs)
 
 
-def _configure_fastvideo_root_logger() -> None:
+def _configure_flashgen_root_logger() -> None:
     logging_config = dict[str, Any]()
 
     if not FLASHGEN_CONFIGURE_LOGGING and FLASHGEN_LOGGING_CONFIG_PATH:
@@ -208,9 +208,9 @@ def _configure_fastvideo_root_logger() -> None:
         dictConfig(logging_config)
 
 
-def init_logger(name: str) -> _FastvideoLogger:
+def init_logger(name: str) -> _FlashgenLogger:
     """The main purpose of this function is to ensure that loggers are
-    retrieved in such a way that we can be sure the root fastvideo logger has
+    retrieved in such a way that we can be sure the root flashgen logger has
     already been configured."""
 
     logger = logging.getLogger(name)
@@ -224,13 +224,13 @@ def init_logger(name: str) -> _FastvideoLogger:
     for method_name, method in methods_to_patch.items():
         setattr(logger, method_name, MethodType(method, logger))  # type: ignore[arg-type]
 
-    return cast(_FastvideoLogger, logger)
+    return cast(_FlashgenLogger, logger)
 
 
 # The root logger is initialized when the module is imported.
 # This is thread-safe as the module is only imported once,
 # guaranteed by the Python GIL.
-_configure_fastvideo_root_logger()
+_configure_flashgen_root_logger()
 
 logger = init_logger(__name__)
 
@@ -242,7 +242,7 @@ def _trace_calls(log_path, root_dir, frame, event, arg=None):
         lineno = frame.f_lineno
         func_name = frame.f_code.co_name
         if not filename.startswith(root_dir):
-            # only log the functions in the fastvideo root_dir
+            # only log the functions in the flashgen root_dir
             return
         # Log every function call or return
         try:
@@ -280,7 +280,7 @@ def enable_trace_function_call(log_file_path: str, root_dir: str | None = None):
     This is useful for debugging hangs or crashes.
     `log_file_path` is the path to the log file.
     `root_dir` is the root directory of the code to trace. If None, it is the
-    fastvideo root directory.
+    flashgen root directory.
 
     Note that this call is thread-level, any threads calling this function
     will have the trace enabled. Other threads will not be affected.
@@ -290,6 +290,6 @@ def enable_trace_function_call(log_file_path: str, root_dir: str | None = None):
                    "is suggested to be used for debugging hang or crashes only.")
     logger.info("Trace frame log is saved to %s", log_file_path)
     if root_dir is None:
-        # by default, this is the fastvideo root directory
+        # by default, this is the flashgen root directory
         root_dir = os.path.dirname(os.path.dirname(__file__))
     sys.settrace(partial(_trace_calls, log_file_path, root_dir))

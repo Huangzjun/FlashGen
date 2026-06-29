@@ -1,36 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
-from dataclasses import asdict
 import math
 import os
-import shutil
-import tempfile
 import time
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Iterator
+from dataclasses import asdict
 from typing import Any
 from flashgen.profiler import profile_region
-import imageio
-import numpy as np
 import torch
 import torch.distributed as dist
-import torchvision
-from einops import rearrange
-from torch.utils.data import DataLoader
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm.auto import tqdm
-from diffusers import FlowMatchEulerDiscreteScheduler
+from flashgen.models.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 
 import flashgen.envs as envs
-from flashgen.api.sampling_param import SamplingParam
 from flashgen.dataset import build_parquet_map_style_dataloader
 from flashgen.dataset.dataloader.schema import pyarrow_schema_t2v
-from flashgen.dataset.validation_dataset import ValidationDataset
 from flashgen.distributed import (cleanup_dist_env_and_memory, get_local_torch_device, get_sp_group, get_world_group)
-from flashgen.fastvideo_args import FlashgenArgs, TrainingArgs
+from flashgen.flashgen_args import FlashgenArgs, TrainingArgs
 from flashgen.forward_context import set_forward_context
 from flashgen.logger import init_logger
-from flashgen.models.vision_utils import load_video
 from flashgen.pipelines import (ComposedPipelineBase, ForwardBatch, LoRAPipeline, TrainingBatch)
 from flashgen.platforms import current_platform
 from flashgen.training.activation_checkpoint import (apply_activation_checkpointing)
@@ -38,7 +28,7 @@ from flashgen.training.trackers import (DummyTracker, TrackerType, initialize_tr
 from flashgen.training.training_utils import (clip_grad_norm_while_handling_failing_dtensor_cases,
                                                compute_density_for_timestep_sampling, count_trainable, get_scheduler,
                                                get_sigmas, load_checkpoint, normalize_dit_input, save_checkpoint)
-from flashgen.utils import set_random_seed, shallow_asdict
+from flashgen.utils import set_random_seed
 
 logger = init_logger(__name__)
 
@@ -607,288 +597,12 @@ class TrainingPipeline(LoRAPipeline, ABC):
         gpu_memory_usage = current_platform.get_torch_device().memory_allocated() / 1024**2
         logger.info("GPU memory usage before train_one_step: %s MB", gpu_memory_usage)
 
-    def _prepare_validation_batch(self, sampling_param: SamplingParam, training_args: TrainingArgs,
-                                  validation_batch: dict[str, Any], num_inference_steps: int) -> ForwardBatch:
-        sampling_param.prompt = validation_batch['prompt']
-        sampling_param.height = training_args.num_height
-        sampling_param.width = training_args.num_width
-        sampling_param.num_inference_steps = num_inference_steps
-        sampling_param.data_type = "video"
-        if training_args.validation_guidance_scale:
-            sampling_param.guidance_scale = float(training_args.validation_guidance_scale)
-        assert self.seed is not None
-        sampling_param.seed = self.seed
-
-        latents_size = [(sampling_param.num_frames - 1) // 4 + 1, sampling_param.height // 8, sampling_param.width // 8]
-        n_tokens = latents_size[0] * latents_size[1] * latents_size[2]
-        temporal_compression_factor = training_args.pipeline_config.vae_config.arch_config.temporal_compression_ratio
-        num_frames = (training_args.num_latent_t - 1) * temporal_compression_factor + 1
-        sampling_param.num_frames = num_frames
-        batch = ForwardBatch(
-            **shallow_asdict(sampling_param),
-            latents=None,
-            generator=self.validation_random_generator,
-            n_tokens=n_tokens,
-            eta=0.0,
-        )
-
-        return batch
-
     @torch.no_grad()
     def _log_validation(self, transformer, training_args, global_step) -> None:
-        """
-        Generate a validation video and log it to the configured tracker to check the quality during training.
-        """
-        training_args.inference_mode = True
-        training_args.dit_cpu_offload = False
-        if not training_args.log_validation:
-            return
-        if self.validation_pipeline is None:
-            raise ValueError("Validation pipeline is not set")
-
-        logger.info("Starting validation")
-
-        # Create sampling parameters if not provided
-        sampling_param = SamplingParam.from_pretrained(training_args.model_path)
-
-        # Prepare validation prompts
-        logger.info('rank: %s: flashgen_args.validation_dataset_file: %s',
-                    self.global_rank,
-                    training_args.validation_dataset_file,
-                    local_main_process_only=False)
-        validation_dataset = ValidationDataset(training_args.validation_dataset_file)
-        validation_dataloader = DataLoader(validation_dataset, batch_size=None, num_workers=0)
-
-        self.transformer.eval()
-        if getattr(self, "transformer_2", None) is not None:
-            self.transformer_2.eval()
-
-        validation_steps = training_args.validation_sampling_steps.split(",")
-        validation_steps = [int(step) for step in validation_steps]
-        validation_steps = [step for step in validation_steps if step > 0]
-        # Log validation results for this step
-        world_group = get_world_group()
-        num_sp_groups = world_group.world_size // self.sp_group.world_size
-
-        # Process each validation prompt for each validation step
-        for num_inference_steps in validation_steps:
-            logger.info("rank: %s: num_inference_steps: %s",
-                        self.global_rank,
-                        num_inference_steps,
-                        local_main_process_only=False)
-            step_videos: list[np.ndarray] = []
-            step_captions: list[str] = []
-            step_ref_videos: list[str | None] = []
-
-            step_audio: list[np.ndarray | None] = []
-            step_sample_rates: list[int | None] = []
-
-            for validation_batch in validation_dataloader:
-                batch = self._prepare_validation_batch(sampling_param, training_args, validation_batch,
-                                                       num_inference_steps)
-                logger.info("rank: %s: rank_in_sp_group: %s, batch.prompt: %s",
-                            self.global_rank,
-                            self.rank_in_sp_group,
-                            batch.prompt,
-                            local_main_process_only=False)
-
-                assert batch.prompt is not None and isinstance(batch.prompt, str)
-                step_captions.append(batch.prompt)
-                step_ref_videos.append(validation_batch.get("ref_video"))
-
-                # Run validation inference
-                output_batch = self.validation_pipeline.forward(batch, training_args)
-                samples = output_batch.output.cpu()
-
-                # Capture audio if available
-                audio = output_batch.extra.get("audio")
-                sample_rate = output_batch.extra.get("audio_sample_rate")
-
-                if audio is not None and torch.is_tensor(audio):
-                    audio = audio.detach().cpu().float().numpy()
-
-                step_audio.append(audio)
-                step_sample_rates.append(sample_rate)
-
-                if self.rank_in_sp_group != 0:
-                    continue
-
-                # Process outputs
-                video = rearrange(samples, "b c t h w -> t b c h w")
-                frames = []
-                for x in video:
-                    x = torchvision.utils.make_grid(x, nrow=6)
-                    x = x.transpose(0, 1).transpose(1, 2).squeeze(-1)
-                    frames.append((x * 255).numpy().astype(np.uint8))
-                step_videos.append(frames)
-
-            # Only sp_group leaders (rank_in_sp_group == 0) need to send their
-            # results to global rank 0
-            if self.rank_in_sp_group == 0 and self.global_rank == 0:
-                # Global rank 0 collects results from all sp_group leaders
-                all_videos = step_videos  # Start with own results
-                all_captions = step_captions
-                all_ref_videos = step_ref_videos
-                all_audios = step_audio
-                all_sample_rates = step_sample_rates
-
-                # Receive from other sp_group leaders
-                for sp_group_idx in range(1, num_sp_groups):
-                    src_rank = sp_group_idx * self.sp_world_size  # Global rank of other sp_group leaders
-                    recv_videos = world_group.recv_object(src=src_rank)
-                    recv_captions = world_group.recv_object(src=src_rank)
-                    recv_ref_videos = world_group.recv_object(src=src_rank)
-                    recv_audios = world_group.recv_object(src=src_rank)
-                    recv_sample_rates = world_group.recv_object(src=src_rank)
-
-                    all_videos.extend(recv_videos)
-                    all_captions.extend(recv_captions)
-                    all_ref_videos.extend(recv_ref_videos)
-                    all_audios.extend(recv_audios)
-                    all_sample_rates.extend(recv_sample_rates)
-
-                video_filenames = []
-                for i, (video, caption, audio, sample_rate) in enumerate(
-                        zip(all_videos, all_captions, all_audios, all_sample_rates, strict=True)):
-                    os.makedirs(training_args.output_dir, exist_ok=True)
-                    filename = os.path.join(
-                        training_args.output_dir,
-                        f"validation_step_{global_step}_inference_steps_{num_inference_steps}_video_{i}.mp4")
-                    imageio.mimsave(filename, video, fps=sampling_param.fps)
-                    # Mux audio if available
-                    if (audio is not None and sample_rate is not None and not self._mux_audio(
-                            filename,
-                            audio,
-                            sample_rate,
-                    )):
-                        logger.warning("Audio mux failed for validation video %s; saved video without audio.", filename)
-                    video_filenames.append(filename)
-
-                artifacts = []
-                for filename, caption in zip(video_filenames, all_captions, strict=True):
-                    video_artifact = self.tracker.video(filename, caption=caption)
-                    if video_artifact is not None:
-                        artifacts.append(video_artifact)
-                if artifacts:
-                    logs = {f"validation_videos_{num_inference_steps}_steps": artifacts}
-                    self.tracker.log_artifacts(logs, global_step)
-                if not self.validation_ref_videos_logged:
-                    ref_artifacts = []
-                    for ref_filename, caption in zip(all_ref_videos, all_captions, strict=True):
-                        if ref_filename is None:
-                            continue
-                        ref_frames = np.stack([np.asarray(frame) for frame in load_video(ref_filename)], axis=0)
-                        ref_frames = np.ascontiguousarray(ref_frames.transpose(0, 3, 1, 2))
-                        video_artifact = self.tracker.video(ref_frames, caption=caption, fps=sampling_param.fps)
-                        if video_artifact is not None:
-                            ref_artifacts.append(video_artifact)
-                    if ref_artifacts:
-                        self.tracker.log_artifacts({"validation_ref_videos": ref_artifacts}, global_step)
-                        self.validation_ref_videos_logged = True
-            elif self.rank_in_sp_group == 0:
-                # Other sp_group leaders send their results to global rank 0
-                world_group.send_object(step_videos, dst=0)
-                world_group.send_object(step_captions, dst=0)
-                world_group.send_object(step_ref_videos, dst=0)
-                world_group.send_object(step_audio, dst=0)
-                world_group.send_object(step_sample_rates, dst=0)
-
-        # Re-enable gradients for training
-        training_args.inference_mode = False
-        self.transformer.train()
-        if getattr(self, "transformer_2", None) is not None:
-            self.transformer_2.train()
-
-    @staticmethod
-    def _mux_audio(
-        video_path: str,
-        audio: torch.Tensor | np.ndarray,
-        sample_rate: int,
-    ) -> bool:
-        """Mux audio into video using PyAV."""
-        try:
-            import av
-        except ImportError:
-            logger.warning("PyAV not installed; cannot mux audio. "
-                           "Install with: uv pip install av")
-            return False
-
-        if torch.is_tensor(audio):
-            audio_np = audio.detach().cpu().float().numpy()
-        else:
-            audio_np = np.asarray(audio, dtype=np.float32)
-
-        if audio_np.ndim == 1:
-            audio_np = audio_np[:, None]
-        elif audio_np.ndim == 2:
-            if audio_np.shape[0] <= 8 and audio_np.shape[1] > audio_np.shape[0]:
-                audio_np = audio_np.T
-        else:
-            logger.warning("Unexpected audio shape %s; skipping mux.", audio_np.shape)
-            return False
-
-        audio_np = np.clip(audio_np, -1.0, 1.0)
-        audio_int16 = (audio_np * 32767.0).astype(np.int16)
-        num_channels = audio_int16.shape[1]
-        layout = "stereo" if num_channels == 2 else "mono"
-
-        try:
-            import wave
-            with tempfile.TemporaryDirectory() as tmpdir:
-                out_path = os.path.join(tmpdir, "muxed.mp4")
-                wav_path = os.path.join(tmpdir, "audio.wav")
-
-                # Write audio to WAV file
-                with wave.open(wav_path, "wb") as wav_file:
-                    wav_file.setnchannels(num_channels)
-                    wav_file.setsampwidth(2)
-                    wav_file.setframerate(sample_rate)
-                    wav_file.writeframes(audio_int16.tobytes())
-
-                # Open input video and audio
-                input_video = av.open(video_path)
-                input_audio = av.open(wav_path)
-
-                # Create output with both streams
-                output = av.open(out_path, mode="w")
-
-                # Add video stream (copy codec from input)
-                in_video_stream = input_video.streams.video[0]
-                out_video_stream = output.add_stream(
-                    codec_name=in_video_stream.codec_context.name,
-                    rate=in_video_stream.average_rate,
-                )
-                out_video_stream.width = in_video_stream.width
-                out_video_stream.height = in_video_stream.height
-                out_video_stream.pix_fmt = in_video_stream.pix_fmt
-
-                # Add audio stream (AAC)
-                out_audio_stream = output.add_stream("aac", rate=sample_rate)
-                out_audio_stream.layout = layout
-
-                # Remux video (decode and re-encode to be safe)
-                for frame in input_video.decode(video=0):
-                    for packet in out_video_stream.encode(frame):
-                        output.mux(packet)
-                for packet in out_video_stream.encode():
-                    output.mux(packet)
-
-                # Encode audio
-                for frame in input_audio.decode(audio=0):
-                    frame.pts = None  # Let encoder assign PTS
-                    for packet in out_audio_stream.encode(frame):
-                        output.mux(packet)
-                for packet in out_audio_stream.encode():
-                    output.mux(packet)
-
-                input_video.close()
-                input_audio.close()
-                output.close()
-                shutil.move(out_path, video_path)
-            return True
-        except Exception as e:
-            logger.warning("Audio mux failed: %s", e)
-            return False
+        if training_args.log_validation and self.global_rank == 0:
+            logger.info("Validation video generation is disabled in train-only Flashgen; skipping step %s.",
+                        global_step)
+        return
 
     def visualize_intermediate_latents(self, training_batch: TrainingBatch, training_args: TrainingArgs, step: int):
         """Add visualization data to tracker logging and save frames to disk."""

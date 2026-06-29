@@ -35,8 +35,6 @@ env
 weights/
 logs/
 
-# SSIM test outputs
-fastvideo/tests/ssim/generated_videos/
 **/.cache/**
 
 
@@ -68,9 +66,6 @@ docs/distillation/examples/
 
 # Python pickle files
 *.pkl
-
-# Reference videos
-!fastvideo/tests/ssim/reference_videos/**/*.mp4
 
 # Static images
 !docs/assets/images/**/*.png
@@ -128,4 +123,3 @@ apps/dreamverse/web/.env.production.local
 .sisyphus/
 openspec/
 docs-1/
-fastvideo/tests/ssim/reference_videos/**

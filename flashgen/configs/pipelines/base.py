@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import torch
 
-from flashgen.configs.models import (DiTConfig, EncoderConfig, ModelConfig, VAEConfig, UpsamplerConfig)
+from flashgen.configs.models import (DiTConfig, EncoderConfig, ModelConfig, VAEConfig)
 from flashgen.configs.models.encoders import BaseEncoderOutput
 from flashgen.configs.utils import update_config_from_args
 from flashgen.logger import init_logger
@@ -40,8 +40,6 @@ class PipelineConfig:
     # Model configuration
     dit_config: DiTConfig = field(default_factory=DiTConfig)
     dit_precision: str = "bf16"
-    upsampler_config: UpsamplerConfig = field(default_factory=UpsamplerConfig)
-    upsampler_precision: str = "fp32"
 
     # VAE configuration
     vae_config: VAEConfig = field(default_factory=VAEConfig)

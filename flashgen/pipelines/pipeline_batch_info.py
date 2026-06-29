@@ -15,9 +15,7 @@ import PIL.Image
 import torch
 
 if TYPE_CHECKING:
-    from torchcodec.decoders import VideoDecoder
-
-    from flashgen.api.schema import ContinuationState
+    ContinuationState = Any
 
 import time
 from collections import OrderedDict
@@ -200,15 +198,13 @@ class ForwardBatch:
     ltx2_conditioning_latent_stage2: torch.Tensor | None = None
     ltx2_video_conditions: list[tuple[list[str], int, float]] | None = None
 
-    # Stable Audio (T2A): clip start/end in seconds. Parallels the
-    # `SamplingParam` fields of the same name; the
-    # `StableAudioConditioningStage` / `DecodingStage` read them.
+    # Stable Audio (T2A): clip start/end in seconds. Kept as inert batch
+    # fields for compatibility with older checkpoints/configs.
     audio_start_in_s: float | None = None
     audio_end_in_s: float | None = None
 
-    # Stable Audio A2A variation + inpainting payloads (parallel to
-    # `SamplingParam`). `Any` because we accept torch tensors or numpy
-    # arrays the user supplies; the latent-prep stage normalises shapes.
+    # Stable Audio A2A variation + inpainting payloads. `Any` because older
+    # configs may pass torch tensors or numpy arrays.
     init_audio: Any = None
     init_audio_strength: float | None = None
     init_noise_level: float | None = None
@@ -326,5 +322,5 @@ class TrainingBatch:
 
 @dataclass
 class PreprocessBatch(ForwardBatch):
-    video_loader: list["VideoDecoder"] | list[str] = field(default_factory=list)
+    video_loader: list[Any] | list[str] = field(default_factory=list)
     video_file_name: list[str] = field(default_factory=list)

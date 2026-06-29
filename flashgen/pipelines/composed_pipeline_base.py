@@ -15,13 +15,12 @@ import torch
 from flashgen.configs.pipelines import PipelineConfig
 from flashgen.distributed import (maybe_init_distributed_environment_and_model_parallel, get_world_group)
 from flashgen.distributed.communication_op import (warmup_sequence_parallel_communication)
-from flashgen.fastvideo_args import FlashgenArgs, TrainingArgs
+from flashgen.flashgen_args import FlashgenArgs, TrainingArgs
 from flashgen.hooks.activation_trace import attach_activation_trace, detach_activation_trace
 from flashgen.logger import init_logger
 from flashgen.profiler import get_or_create_profiler
 from flashgen.models.loader.component_loader import PipelineComponentLoader
 from flashgen.pipelines.pipeline_batch_info import ForwardBatch
-from flashgen.pipelines.stages import PipelineStage
 import flashgen.envs as envs
 from flashgen.utils import (maybe_download_model, verify_model_config_and_directory)
 
@@ -41,7 +40,7 @@ class ComposedPipelineBase(ABC):
     _required_config_modules: list[str] = []
     _extra_config_module_map: dict[str, str] = {}
     training_args: TrainingArgs | None = None
-    fastvideo_args: FlashgenArgs | TrainingArgs | None = None
+    flashgen_args: FlashgenArgs | TrainingArgs | None = None
     modules: dict[str, Any] = {}
     # do not need to include moe related transformers
     trainable_transformer_names: list[str] = ["transformer"]
@@ -51,18 +50,18 @@ class ComposedPipelineBase(ABC):
     # TODO(will): args should support both inference args and training args
     def __init__(self,
                  model_path: str,
-                 fastvideo_args: FlashgenArgs | TrainingArgs,
+                 flashgen_args: FlashgenArgs | TrainingArgs,
                  required_config_modules: list[str] | None = None,
                  loaded_modules: dict[str, torch.nn.Module] | None = None):
         """
         Initialize the pipeline. After __init__, the pipeline should be ready to
         use. The pipeline should be stateless and not hold any batch state.
         """
-        self.fastvideo_args = fastvideo_args
+        self.flashgen_args = flashgen_args
 
         self.model_path: str = model_path
-        self._stages: list[PipelineStage] = []
-        self._stage_name_mapping: dict[str, PipelineStage] = {}
+        self._stages: list[Any] = []
+        self._stage_name_mapping: dict[str, Any] = {}
         self._trace_mgr = None
 
         if required_config_modules is not None:
@@ -71,7 +70,7 @@ class ComposedPipelineBase(ABC):
         if self._required_config_modules is None:
             raise NotImplementedError("Subclass must set _required_config_modules")
 
-        maybe_init_distributed_environment_and_model_parallel(fastvideo_args.tp_size, fastvideo_args.sp_size)
+        maybe_init_distributed_environment_and_model_parallel(flashgen_args.tp_size, flashgen_args.sp_size)
 
         # Torch profiler. Enabled and configured through env vars:
         # FLASHGEN_TORCH_PROFILER_DIR=/path/to/save/trace
@@ -84,11 +83,11 @@ class ComposedPipelineBase(ABC):
         # Load modules directly in initialization
         logger.info("Loading pipeline modules...")
         with self.profiler_controller.region("profiler_region_model_loading"):
-            self.modules = self.load_modules(fastvideo_args, loaded_modules)
+            self.modules = self.load_modules(flashgen_args, loaded_modules)
 
     def set_trainable(self) -> None:
         # Only train DiT
-        if getattr(self.fastvideo_args, "training_mode", False):
+        if getattr(self.flashgen_args, "training_mode", False):
             for name, module in self.trainable_transformer_modules.items():
                 logger.info("Setting %s to requires_grad=True", name)
                 if not isinstance(module, torch.nn.Module):
@@ -153,25 +152,25 @@ class ComposedPipelineBase(ABC):
         self.modules[module_name] = torch.compile(module, **compile_kwargs)
 
     def post_init(self) -> None:
-        assert self.fastvideo_args is not None, "fastvideo_args must be set"
+        assert self.flashgen_args is not None, "flashgen_args must be set"
         if self.post_init_called:
             return
         self.post_init_called = True
-        if self.fastvideo_args.training_mode:
-            assert isinstance(self.fastvideo_args, TrainingArgs)
-            self.training_args = self.fastvideo_args
+        if self.flashgen_args.training_mode:
+            assert isinstance(self.flashgen_args, TrainingArgs)
+            self.training_args = self.flashgen_args
             assert self.training_args is not None
             self.initialize_training_pipeline(self.training_args)
             if self.training_args.log_validation:
                 self.initialize_validation_pipeline(self.training_args)
 
-        self.initialize_pipeline(self.fastvideo_args)
-        compile_transformer = self.fastvideo_args.enable_torch_compile
-        compile_text_encoder = (self.fastvideo_args.enable_torch_compile_text_encoder)
-        compile_vae = self.fastvideo_args.enable_torch_compile_vae
-        compile_audio_vae = self.fastvideo_args.enable_torch_compile_audio_vae
+        self.initialize_pipeline(self.flashgen_args)
+        compile_transformer = self.flashgen_args.enable_torch_compile
+        compile_text_encoder = (self.flashgen_args.enable_torch_compile_text_encoder)
+        compile_vae = self.flashgen_args.enable_torch_compile_vae
+        compile_audio_vae = self.flashgen_args.enable_torch_compile_audio_vae
         if (compile_transformer or compile_text_encoder or compile_vae or compile_audio_vae):
-            if self.fastvideo_args.training_mode:
+            if self.flashgen_args.training_mode:
                 logger.info("Torch Compile enabled via FSDP loader for training; skipping additional pipeline compile")
             else:
                 fsdp_module_cls = None
@@ -181,11 +180,11 @@ class ComposedPipelineBase(ABC):
                 except Exception:  # pragma: no cover - FSDP not always available
                     fsdp_module_cls = None
 
-                global_compile_kwargs = (self.fastvideo_args.torch_compile_kwargs or {})
-                dit_compile_kwargs = (self.fastvideo_args.torch_compile_kwargs_dit or global_compile_kwargs)
-                text_compile_kwargs = (self.fastvideo_args.torch_compile_kwargs_text_encoder or global_compile_kwargs)
-                vae_compile_kwargs = (self.fastvideo_args.torch_compile_kwargs_vae or global_compile_kwargs)
-                audio_vae_compile_kwargs = (self.fastvideo_args.torch_compile_kwargs_audio_vae or global_compile_kwargs)
+                global_compile_kwargs = (self.flashgen_args.torch_compile_kwargs or {})
+                dit_compile_kwargs = (self.flashgen_args.torch_compile_kwargs_dit or global_compile_kwargs)
+                text_compile_kwargs = (self.flashgen_args.torch_compile_kwargs_text_encoder or global_compile_kwargs)
+                vae_compile_kwargs = (self.flashgen_args.torch_compile_kwargs_vae or global_compile_kwargs)
+                audio_vae_compile_kwargs = (self.flashgen_args.torch_compile_kwargs_audio_vae or global_compile_kwargs)
 
                 if compile_transformer:
                     self._maybe_compile_pipeline_module(
@@ -236,9 +235,9 @@ class ComposedPipelineBase(ABC):
 
         self._trace_mgr = attach_activation_trace(self.modules.get("transformer"))
 
-        if not self.fastvideo_args.training_mode:
+        if not self.flashgen_args.training_mode:
             logger.info("Creating pipeline stages...")
-            self.create_pipeline_stages(self.fastvideo_args)
+            self.create_pipeline_stages(self.flashgen_args)
 
             # Warmup NCCL communicators for sequence parallelism to avoid
             # slow first forward pass due to lazy initialization
@@ -269,26 +268,26 @@ class ComposedPipelineBase(ABC):
         if args is None or args.inference_mode:
 
             kwargs['model_path'] = model_path
-            fastvideo_args = FlashgenArgs.from_kwargs(**kwargs)
+            flashgen_args = FlashgenArgs.from_kwargs(**kwargs)
         else:
             assert args is not None, "args must be provided for training mode"
-            fastvideo_args = TrainingArgs.from_cli_args(args)
+            flashgen_args = TrainingArgs.from_cli_args(args)
             # TODO(will): fix this so that its not so ugly
-            fastvideo_args.model_path = model_path
+            flashgen_args.model_path = model_path
             for key, value in kwargs.items():
-                setattr(fastvideo_args, key, value)
+                setattr(flashgen_args, key, value)
 
-            fastvideo_args.dit_cpu_offload = False
+            flashgen_args.dit_cpu_offload = False
             # we hijack the precision to be the master weight type so that the
             # model is loaded with the correct precision. Subsequently we will
             # use FSDP2's MixedPrecisionPolicy to set the precision for the
             # fwd, bwd, and other operations' precision.
-            assert fastvideo_args.pipeline_config.dit_precision == 'fp32', 'only fp32 is supported for training'
+            assert flashgen_args.pipeline_config.dit_precision == 'fp32', 'only fp32 is supported for training'
 
-        logger.info("fastvideo_args in from_pretrained: %s", fastvideo_args)
+        logger.info("flashgen_args in from_pretrained: %s", flashgen_args)
 
         pipe = cls(model_path,
-                   fastvideo_args,
+                   flashgen_args,
                    required_config_modules=required_config_modules,
                    loaded_modules=loaded_modules)
         pipe.post_init()
@@ -305,7 +304,7 @@ class ComposedPipelineBase(ABC):
     def _load_config(self, model_path: str) -> dict[str, Any]:
         model_path = maybe_download_model(self.model_path)
         self.model_path = model_path
-        # fastvideo_args.downloaded_model_path = model_path
+        # flashgen_args.downloaded_model_path = model_path
         logger.info("Model path: %s", model_path)
         config = verify_model_config_and_directory(model_path)
         return cast(dict[str, Any], config)
@@ -329,14 +328,14 @@ class ComposedPipelineBase(ABC):
         return self._required_config_modules
 
     @property
-    def stages(self) -> list[PipelineStage]:
+    def stages(self) -> list[Any]:
         """
         List of stages in the pipeline.
         """
         return self._stages
 
     @abstractmethod
-    def create_pipeline_stages(self, fastvideo_args: FlashgenArgs):
+    def create_pipeline_stages(self, flashgen_args: FlashgenArgs):
         """
         Create the inference pipeline stages.
         """
@@ -348,14 +347,14 @@ class ComposedPipelineBase(ABC):
         """
         raise NotImplementedError
 
-    def initialize_pipeline(self, fastvideo_args: FlashgenArgs):
+    def initialize_pipeline(self, flashgen_args: FlashgenArgs):
         """
         Initialize the pipeline.
         """
         return
 
     def load_modules(self,
-                     fastvideo_args: FlashgenArgs,
+                     flashgen_args: FlashgenArgs,
                      loaded_modules: dict[str, torch.nn.Module] | None = None) -> dict[str, Any]:
         """
         Load the modules from the config.
@@ -375,7 +374,7 @@ class ComposedPipelineBase(ABC):
             logger.info("MoE pipeline detected. Adding transformer_2 to self.required_config_modules...")
             self.required_config_modules.append("transformer_2")
             logger.info("MoE pipeline detected. Setting boundary ratio to %s", model_index["boundary_ratio"])
-            fastvideo_args.pipeline_config.dit_config.boundary_ratio = model_index["boundary_ratio"]
+            flashgen_args.pipeline_config.dit_config.boundary_ratio = model_index["boundary_ratio"]
 
         model_index.pop("boundary_ratio", None)
         # used by Wan2.2 ti2v
@@ -444,7 +443,7 @@ class ComposedPipelineBase(ABC):
                 module_name=load_module_name,
                 component_model_path=component_model_path,
                 transformers_or_diffusers=transformers_or_diffusers,
-                fastvideo_args=fastvideo_args,
+                flashgen_args=flashgen_args,
             )
             logger.info("Loaded module %s from %s", module_name, component_model_path)
 
@@ -461,7 +460,7 @@ class ComposedPipelineBase(ABC):
 
         return modules
 
-    def add_stage(self, stage_name: str, stage: PipelineStage):
+    def add_stage(self, stage_name: str, stage: Any):
         assert self.modules is not None, "No modules are registered"
         # Preserve the pipeline-unique stage key for structured metrics.
         # Multiple stages can share the same class (for example LTX2 main
@@ -487,14 +486,14 @@ class ComposedPipelineBase(ABC):
     def forward(
         self,
         batch: ForwardBatch,
-        fastvideo_args: FlashgenArgs,
+        flashgen_args: FlashgenArgs,
     ) -> ForwardBatch:
         """
         Generate a video or image using the pipeline.
         
         Args:
             batch: The batch to generate from.
-            fastvideo_args: The inference arguments.
+            flashgen_args: The inference arguments.
         Returns:
             ForwardBatch: The batch with the generated video or image.
         """
@@ -505,7 +504,7 @@ class ComposedPipelineBase(ABC):
         logger.info("Running pipeline stages: %s", self._stage_name_mapping.keys())
         # logger.info("Batch: %s", batch)
         for stage in self.stages:
-            batch = stage(batch, fastvideo_args)
+            batch = stage(batch, flashgen_args)
 
         # Return the output
         return batch

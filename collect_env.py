@@ -14,7 +14,7 @@ import subprocess
 import sys
 # This script outputs relevant system environment info.
 # Run it with: python collect_env.py
-# Requires Python 3.10+ (matches fastvideo); uses shutil.which (Python 3.3+).
+# Requires Python 3.10+ (matches flashgen); uses shutil.which (Python 3.3+).
 from collections import namedtuple
 
 from flashgen.envs import environment_variables
@@ -54,8 +54,8 @@ SystemEnv = namedtuple(
         'caching_allocator_config',
         'is_xnnpack_available',
         'cpu_info',
-        'fastvideo_version',
-        'fastvideo_build_flags',
+        'flashgen_version',
+        'flashgen_build_flags',
         'gpu_topo',
         'env_vars',
     ])
@@ -257,7 +257,7 @@ def get_nvidia_smi():
     return smi
 
 
-def get_fastvideo_version():
+def get_flashgen_version():
     return ""
     from flashgen import __version__, __version_tuple__
 
@@ -278,7 +278,7 @@ def get_fastvideo_version():
     return __version__
 
 
-def summarize_fastvideo_build_flags():
+def summarize_flashgen_build_flags():
     # This could be a static method if the flags are constant, or dynamic if you need to check environment variables, etc.
     return 'CUDA Archs: {}; ROCm: {}; Neuron: {}'.format(
         os.environ.get('TORCH_CUDA_ARCH_LIST', 'Not Set'),
@@ -560,8 +560,8 @@ def get_env_info():
 
     conda_packages = get_conda_packages(run_lambda)
 
-    fastvideo_version = get_fastvideo_version()
-    fastvideo_build_flags = summarize_fastvideo_build_flags()
+    flashgen_version = get_flashgen_version()
+    flashgen_build_flags = summarize_flashgen_build_flags()
     gpu_topo = get_gpu_topo(run_lambda)
 
     return SystemEnv(
@@ -591,8 +591,8 @@ def get_env_info():
         caching_allocator_config=get_cachingallocator_config(),
         is_xnnpack_available=is_xnnpack_available(),
         cpu_info=get_cpu_info(run_lambda),
-        fastvideo_version=fastvideo_version,
-        fastvideo_build_flags=fastvideo_build_flags,
+        flashgen_version=flashgen_version,
+        flashgen_build_flags=flashgen_build_flags,
         gpu_topo=gpu_topo,
         env_vars=get_env_vars(),
     )
@@ -636,9 +636,9 @@ Versions of relevant libraries:
 env_info_fmt += "\n"
 
 env_info_fmt += """
-Flashgen Version: {fastvideo_version}
+Flashgen Version: {flashgen_version}
 Flashgen Build Flags:
-{fastvideo_build_flags}
+{flashgen_build_flags}
 GPU Topology:
 {gpu_topo}
 

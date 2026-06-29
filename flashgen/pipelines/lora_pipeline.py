@@ -13,7 +13,7 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.tensor import DTensor
 
 from flashgen.distributed import get_local_torch_device
-from flashgen.fastvideo_args import FlashgenArgs, TrainingArgs
+from flashgen.flashgen_args import FlashgenArgs, TrainingArgs
 from flashgen.hooks.hooks import ModuleHookManager
 from flashgen.hooks.layerwise_offload import LayerwiseOffloadHook
 from flashgen.layers.lora.linear import (
@@ -104,7 +104,7 @@ class LoRAPipeline(ComposedPipelineBase):
     cur_adapter_path: str = ""
     # model_name -> layers
     lora_layers: dict[str, LoRAModelLayers] = {}
-    fastvideo_args: FlashgenArgs | TrainingArgs
+    flashgen_args: FlashgenArgs | TrainingArgs
     exclude_lora_layers: dict[str, list[str]] = {}
     device: torch.device = get_local_torch_device()
     lora_target_modules: list[str] | None = None
@@ -142,16 +142,16 @@ class LoRAPipeline(ComposedPipelineBase):
                 transformer_module,
         ) in self.trainable_transformer_modules.items():
             self.exclude_lora_layers[transformer_name] = (transformer_module.config.arch_config.exclude_lora_layers)
-        self.lora_target_modules = self.fastvideo_args.lora_target_modules
-        self.lora_path = self.fastvideo_args.lora_path
-        self.lora_nickname = self.fastvideo_args.lora_nickname
-        self.training_mode = self.fastvideo_args.training_mode
-        if self.training_mode and getattr(self.fastvideo_args, "lora_training", False):
-            assert isinstance(self.fastvideo_args, TrainingArgs)
-            if self.fastvideo_args.lora_alpha is None:
-                self.fastvideo_args.lora_alpha = self.fastvideo_args.lora_rank
-            self.lora_rank = self.fastvideo_args.lora_rank  # type: ignore
-            self.lora_alpha = self.fastvideo_args.lora_alpha  # type: ignore
+        self.lora_target_modules = self.flashgen_args.lora_target_modules
+        self.lora_path = self.flashgen_args.lora_path
+        self.lora_nickname = self.flashgen_args.lora_nickname
+        self.training_mode = self.flashgen_args.training_mode
+        if self.training_mode and getattr(self.flashgen_args, "lora_training", False):
+            assert isinstance(self.flashgen_args, TrainingArgs)
+            if self.flashgen_args.lora_alpha is None:
+                self.flashgen_args.lora_alpha = self.flashgen_args.lora_rank
+            self.lora_rank = self.flashgen_args.lora_rank  # type: ignore
+            self.lora_alpha = self.flashgen_args.lora_alpha  # type: ignore
             logger.info(
                 "Using LoRA training with rank %d and alpha %d",
                 self.lora_rank,
@@ -204,7 +204,7 @@ class LoRAPipeline(ComposedPipelineBase):
                 layer.lora_A = nn.Parameter(DTensor.from_local(layer.lora_A, device_mesh=device_mesh))
                 layer.lora_B = nn.Parameter(DTensor.from_local(layer.lora_B, device_mesh=device_mesh))
 
-        is_lora_training = self.training_mode and getattr(self.fastvideo_args, "lora_training", False)
+        is_lora_training = self.training_mode and getattr(self.flashgen_args, "lora_training", False)
         if not is_lora_training:
             super().set_trainable()
             return
@@ -253,8 +253,8 @@ class LoRAPipeline(ComposedPipelineBase):
                     transformer_module,
                     list(self.lora_layers[transformer_name].block_mapping),
             ):
-                if block_name is not None and (not self.fastvideo_args.training_mode
-                                               and self.fastvideo_args.dit_layerwise_offload):
+                if block_name is not None and (not self.flashgen_args.training_mode
+                                               and self.flashgen_args.dit_layerwise_offload):
                     scope_ctx = _get_hook_ctx(self.lora_layers[transformer_name].block_mapping[block_name])
                 else:
                     scope_ctx = nullcontext()
@@ -384,7 +384,7 @@ class LoRAPipeline(ComposedPipelineBase):
                                     lora_A,
                                     lora_B,
                                     lora_alpha=alpha,
-                                    training_mode=self.fastvideo_args.training_mode,
+                                    training_mode=self.flashgen_args.training_mode,
                                     lora_path=lora_path,
                                 )
                             except Exception as e:

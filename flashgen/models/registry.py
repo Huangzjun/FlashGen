@@ -21,7 +21,7 @@ from flashgen.logger import init_logger
 
 logger = init_logger(__name__)
 
-# huggingface class name: (component_name, fastvideo module name, fastvideo class name)
+# huggingface class name: (component_name, flashgen module name, flashgen class name)
 _TEXT_TO_VIDEO_DIT_MODELS = {
     "WanTransformer3DModel": ("dits", "wanvideo", "WanTransformer3DModel"),
 }

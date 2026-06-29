@@ -9,21 +9,15 @@ from collections import deque
 from collections.abc import Iterator
 from typing import Any, cast
 
-import imageio
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torchvision
-from einops import rearrange
-from torch.utils.data import DataLoader
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm.auto import tqdm
 
 import flashgen.envs as envs
-from flashgen.api.sampling_param import SamplingParam
-from flashgen.dataset.validation_dataset import ValidationDataset
 from flashgen.distributed import (cleanup_dist_env_and_memory, get_local_torch_device, get_sp_group, get_world_group)
-from flashgen.fastvideo_args import FlashgenArgs, TrainingArgs
+from flashgen.flashgen_args import FlashgenArgs, TrainingArgs
 from flashgen.forward_context import set_forward_context
 from flashgen.logger import init_logger
 from flashgen.models.schedulers.scheduling_flow_match_euler_discrete import (FlowMatchEulerDiscreteScheduler)
@@ -1015,198 +1009,10 @@ class DistillationPipeline(TrainingPipeline):
 
     @torch.no_grad()
     def _log_validation(self, transformer, training_args, global_step) -> None:
-        training_args.inference_mode = True
-        training_args.dit_cpu_offload = True
-        if not training_args.log_validation:
-            return
-        if self.validation_pipeline is None:
-            raise ValueError("Validation pipeline is not set")
-
-        logger.info("Starting validation")
-
-        # Create sampling parameters if not provided
-        sampling_param = SamplingParam.from_pretrained(training_args.model_path)
-
-        # Set deterministic seed for validation
-
-        logger.info("Using validation seed: %s", self.seed)
-
-        # Prepare validation prompts
-        logger.info('rank: %s: flashgen_args.validation_dataset_file: %s',
-                    self.global_rank,
-                    training_args.validation_dataset_file,
-                    local_main_process_only=False)
-        validation_dataset = ValidationDataset(training_args.validation_dataset_file)
-        validation_dataloader = DataLoader(validation_dataset, batch_size=None, num_workers=0)
-
-        # Set both transformers to eval mode
-        transformer.eval()
-        if hasattr(self, 'transformer_2') and self.transformer_2 is not None:
-            self.transformer_2.eval()
-
-        # Optionally use EMA model for validation if available and ready
-        use_ema_for_validation = (self.training_args.use_ema and self.is_ema_ready(global_step))
-        ema_context = None
-        ema_2_context = None
-
-        if use_ema_for_validation:
-            logger.info("Using EMA model for validation")
-            # Use self.transformer for consistency (the passed transformer should be self.transformer anyway)
-            validation_transformer = self.transformer
-            if self.generator_ema is not None:
-                ema_context = self.generator_ema.apply_to_model(validation_transformer)
-
-            # Handle transformer_2 EMA if available
-            if hasattr(self, 'transformer_2') and self.transformer_2 is not None and self.generator_ema_2 is not None:
-                ema_2_context = self.generator_ema_2.apply_to_model(self.transformer_2)
-                logger.info("Using EMA_2 model for transformer_2 validation")
-        else:
-            # Use self.transformer for consistency, but the passed transformer should be the same
-            validation_transformer = self.transformer
-
-        validation_steps = training_args.validation_sampling_steps.split(",")
-        validation_steps = [int(step) for step in validation_steps]
-        validation_steps = [step for step in validation_steps if step > 0]
-        # Log validation results for this step
-        world_group = get_world_group()
-        num_sp_groups = world_group.world_size // self.sp_group.world_size
-        # Process each validation prompt for each validation step
-        for num_inference_steps in validation_steps:
-            logger.info("rank: %s: num_inference_steps: %s",
-                        self.global_rank,
-                        num_inference_steps,
-                        local_main_process_only=False)
-            step_videos: list[np.ndarray] = []
-            step_captions: list[str] = []
-
-            # Helper function to run validation with optional EMA contexts
-            def run_validation_with_ema(steps: int) -> tuple[list[np.ndarray], list[str], list[Any], list[Any]]:
-                videos: list[np.ndarray] = []
-                captions: list[str] = []
-                audios: list[Any] = []
-                audio_sample_rates: list[Any] = []
-                for validation_batch in validation_dataloader:
-                    batch = self._prepare_validation_batch(sampling_param, training_args, validation_batch, steps)
-
-                    negative_prompt = batch.negative_prompt
-                    batch_negative = ForwardBatch(
-                        data_type="video",
-                        prompt=negative_prompt,
-                        prompt_embeds=[],
-                        prompt_attention_mask=[],
-                    )
-                    result_batch = self.validation_pipeline.prompt_encoding_stage(  # type: ignore
-                        batch_negative, training_args)
-                    self.negative_prompt_embeds, self.negative_prompt_attention_mask = result_batch.prompt_embeds[
-                        0], result_batch.prompt_attention_mask[0]
-
-                    logger.info("rank: %s: rank_in_sp_group: %s, batch.prompt: %s",
-                                self.global_rank,
-                                self.rank_in_sp_group,
-                                batch.prompt,
-                                local_main_process_only=False)
-
-                    assert batch.prompt is not None and isinstance(batch.prompt, str)
-                    captions.append(batch.prompt)
-
-                    # Run validation inference
-                    with torch.no_grad():
-                        output_batch = self.validation_pipeline.forward(batch, training_args)
-                    samples = output_batch.output.cpu()
-                    if self.rank_in_sp_group != 0:
-                        continue
-
-                    # Process outputs
-                    video = rearrange(samples, "b c t h w -> t b c h w")
-                    frames = []
-                    for x in video:
-                        x = torchvision.utils.make_grid(x, nrow=6)
-                        x = x.transpose(0, 1).transpose(1, 2).squeeze(-1)
-                        frames.append((x * 255).numpy().astype(np.uint8))
-                    videos.append(frames)
-                    audios.append(output_batch.extra.get("audio"))
-                    audio_sample_rates.append(output_batch.extra.get("audio_sample_rate"))
-
-                return videos, captions, audios, audio_sample_rates
-
-            # Apply EMA contexts if available (nested context managers)
-            if ema_context is not None and ema_2_context is not None:
-                with ema_context, ema_2_context:
-                    (step_videos, step_captions, step_audios,
-                     step_audio_sample_rates) = run_validation_with_ema(num_inference_steps)
-            elif ema_context is not None:
-                with ema_context:
-                    (step_videos, step_captions, step_audios,
-                     step_audio_sample_rates) = run_validation_with_ema(num_inference_steps)
-            elif ema_2_context is not None:
-                with ema_2_context:
-                    (step_videos, step_captions, step_audios,
-                     step_audio_sample_rates) = run_validation_with_ema(num_inference_steps)
-            else:
-                (step_videos, step_captions, step_audios,
-                 step_audio_sample_rates) = run_validation_with_ema(num_inference_steps)
-
-            # Log validation results for this step
-            world_group = get_world_group()
-            num_sp_groups = world_group.world_size // self.sp_group.world_size
-
-            # Only sp_group leaders (rank_in_sp_group == 0) need to send their
-            # results to global rank 0
-            if self.rank_in_sp_group == 0:
-                if self.global_rank == 0:
-                    # Global rank 0 collects results from all sp_group leaders
-                    all_videos = step_videos  # Start with own results
-                    all_captions = step_captions
-                    all_audios = step_audios
-                    all_audio_sample_rates = step_audio_sample_rates
-
-                    # Receive from other sp_group leaders
-                    for sp_group_idx in range(1, num_sp_groups):
-                        src_rank = sp_group_idx * self.sp_world_size  # Global rank of other sp_group leaders
-                        recv_videos = world_group.recv_object(src=src_rank)
-                        recv_captions = world_group.recv_object(src=src_rank)
-                        recv_audios = world_group.recv_object(src=src_rank)
-                        recv_audio_sample_rates = world_group.recv_object(src=src_rank)
-                        all_videos.extend(recv_videos)
-                        all_captions.extend(recv_captions)
-                        all_audios.extend(recv_audios)
-                        all_audio_sample_rates.extend(recv_audio_sample_rates)
-
-                    video_filenames = []
-                    for i, (video, caption, audio, audio_sample_rate) in enumerate(
-                            zip(all_videos, all_captions, all_audios, all_audio_sample_rates, strict=True)):
-                        os.makedirs(training_args.output_dir, exist_ok=True)
-                        filename = os.path.join(
-                            training_args.output_dir,
-                            f"validation_step_{global_step}_inference_steps_{num_inference_steps}_video_{i}.mp4")
-                        imageio.mimsave(filename, video, fps=sampling_param.fps)
-                        if (audio is not None and audio_sample_rate is not None
-                                and not self._mux_audio(filename, audio, audio_sample_rate)):
-                            logger.warning("Audio mux failed for validation video %s; saved video without audio.",
-                                           filename)
-                        video_filenames.append(filename)
-
-                    artifacts = []
-                    for filename, caption in zip(video_filenames, all_captions, strict=True):
-                        video_artifact = self.tracker.video(filename, caption=caption)
-                        if video_artifact is not None:
-                            artifacts.append(video_artifact)
-                    if artifacts:
-                        logs = {f"validation_videos_{num_inference_steps}_steps": artifacts}
-                        self.tracker.log_artifacts(logs, global_step)
-                else:
-                    # Other sp_group leaders send their results to global rank 0
-                    world_group.send_object(step_videos, dst=0)
-                    world_group.send_object(step_captions, dst=0)
-                    world_group.send_object(step_audios, dst=0)
-                    world_group.send_object(step_audio_sample_rates, dst=0)
-
-        # Re-enable gradients for training - set both transformers back to train mode
-        transformer.train()
-        if hasattr(self, 'transformer_2') and self.transformer_2 is not None:
-            self.transformer_2.train()
-        gc.collect()
-        current_platform.empty_cache()
+        if training_args.log_validation and self.global_rank == 0:
+            logger.info("Validation video generation is disabled in train-only Flashgen; skipping step %s.",
+                        global_step)
+        return
 
     def visualize_intermediate_latents(self, training_batch: TrainingBatch, training_args: TrainingArgs, step: int):
         """Add visualization data to tracker logging and save frames to disk."""

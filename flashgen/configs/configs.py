@@ -35,7 +35,6 @@ class VideoLoaderType(str, Enum):
     """
     Enumeration for different video loaders.
     """
-    TORCHCODEC = "torchcodec"
     TORCHVISION = "torchvision"
 
     @classmethod
@@ -72,7 +71,7 @@ class PreprocessConfig:
     flush_frequency: int = 256
 
     # Video processing parameters
-    video_loader_type: VideoLoaderType = VideoLoaderType.TORCHCODEC
+    video_loader_type: VideoLoaderType = VideoLoaderType.TORCHVISION
     max_height: int = 480
     max_width: int = 848
     num_frames: int = 163

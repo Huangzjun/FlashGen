@@ -41,7 +41,7 @@ Configs that do not appear in `registry.py` are unreachable from `VideoGenerator
 |-----------|----------|
 | Architecture constants (hidden dim, num heads, layer count) | `configs/models/<role>/<model>.py` |
 | Default sampling params (steps, cfg, shift, fps) | `configs/pipelines/<model>.py` |
-| Runtime overrides (precision, sp_size, tp_size, attention backend) | `configs/pipelines/base.py` defaults + CLI flags via `fastvideo_args.py` |
+| Runtime overrides (precision, sp_size, tp_size, attention backend) | `configs/pipelines/base.py` defaults + CLI flags via `flashgen_args.py` |
 | `param_names_mapping` for HF → Flashgen state-dict | Arch config (lives with the model definition) |
 
 If a knob is tunable per inference call → `SamplingParam`, not `PipelineConfig`.

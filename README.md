@@ -1,30 +1,25 @@
 # Flashgen
 
-Flashgen is a slim NPU-oriented fork scaffold based on `FastVideo_fork`.
-This tree keeps the core runtime architecture needed for Wan 2.1 1.3B DMD inference:
-configuration parsing, CLI generation, model loading, distributed/NPU platform
-support, pipeline stages, worker execution, and the Wan DMD pipeline.
+Flashgen is a slim, NPU-oriented (Ascend) **step-distillation training library**.
+It covers training only: distilling multi-step diffusion models into few-step
+student models. Inference is handled by other libraries.
 
 ## Scope
 
-Included DMD entry points:
+- Built-in algorithm: DMD (Distribution Matching Distillation), three-network
+  setup (student generator / frozen real-score teacher / trainable fake-score critic).
+- Target model: Wan 2.1 1.3B T2V.
+- Hardware: NPU (Ascend), HCCL communication, Torch SDPA attention only.
+- Distillation steps: `[1000, 757, 522]` (default 3-step student).
 
-- `WanDMDPipeline`
-- `DmdDenoisingStage`
-- `scripts/inference/inference_wan_DMD_1_3B.yaml`
+## Training
 
-The BASIC pipeline registry is intentionally limited to Wan 2.1 1.3B DMD.
-Other model families, Wan I2V, Wan 2.2, and custom kernel attention backends
-are not part of the supported Flashgen surface.
+Launch distributed DMD distillation via `torchrun`:
 
-## Attention Backend
-
-Flashgen only ships `TORCH_SDPA`. The current Wan 2.1 1.3B DMD flow does not
-import or depend on `fastvideo_kernel`.
-
-## Example
-
-```powershell
-$env:FLASHGEN_ATTENTION_BACKEND = "TORCH_SDPA"
-flashgen generate --config scripts/inference/inference_wan_DMD_1_3B.yaml
+```bash
+bash scripts/distill/v1_distill_dmd_wan.sh
 ```
+
+Entry point: `flashgen/training/wan_distillation_pipeline.py`.
+
+See `docs/架构设计.md` for the full architecture.

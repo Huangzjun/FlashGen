@@ -52,7 +52,7 @@ def get_env_variable_attn_backend() -> AttentionBackendEnum | None:
 # (default behavior if this variable is None)
 #
 # THIS SELECTION TAKES PRECEDENCE OVER THE
-# FASTVIDEO ATTENTION BACKEND ENVIRONMENT VARIABLE
+# FLASHGEN ATTENTION BACKEND ENVIRONMENT VARIABLE
 forced_attn_backend: AttentionBackendEnum | None = None
 
 
