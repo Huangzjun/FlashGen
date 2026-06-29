@@ -505,21 +505,9 @@ class TrainingPipeline(LoRAPipeline, ABC):
         )
         for step in range(self.init_steps + 1, self.training_args.max_train_steps + 1):
             start_time = time.perf_counter()
-            if vsa_available:
-                vsa_sparsity = self.training_args.VSA_sparsity
-                vsa_decay_rate = self.training_args.VSA_decay_rate
-                vsa_decay_interval_steps = self.training_args.VSA_decay_interval_steps
-                current_decay_times = min(step // vsa_decay_interval_steps, vsa_sparsity // vsa_decay_rate)
-                current_vsa_sparsity = current_decay_times * vsa_decay_rate
-            elif vmoba_available:
-                #TODO: add vmoba sparsity scheduling here
-                current_vsa_sparsity = 0.0
-            else:
-                current_vsa_sparsity = 0.0
 
             training_batch = TrainingBatch()
             training_batch.current_timestep = step
-            training_batch.current_vsa_sparsity = current_vsa_sparsity
             training_batch = self.train_one_step(training_batch)
 
             loss = float(training_batch.total_loss)
@@ -542,7 +530,6 @@ class TrainingPipeline(LoRAPipeline, ABC):
                     "step_time": step_time,
                     "avg_step_time": avg_step_time,
                     "grad_norm": grad_norm,
-                    "vsa_sparsity": current_vsa_sparsity,
                 }
                 try:
                     metrics["batch_size"] = int(training_batch.raw_latent_shape[0])
@@ -619,7 +606,6 @@ class TrainingPipeline(LoRAPipeline, ABC):
 
         gpu_memory_usage = current_platform.get_torch_device().memory_allocated() / 1024**2
         logger.info("GPU memory usage before train_one_step: %s MB", gpu_memory_usage)
-        logger.info("VSA validation sparsity: %s", self.training_args.VSA_sparsity)
 
     def _prepare_validation_batch(self, sampling_param: SamplingParam, training_args: TrainingArgs,
                                   validation_batch: dict[str, Any], num_inference_steps: int) -> ForwardBatch:
@@ -644,7 +630,6 @@ class TrainingPipeline(LoRAPipeline, ABC):
             generator=self.validation_random_generator,
             n_tokens=n_tokens,
             eta=0.0,
-            VSA_sparsity=training_args.VSA_sparsity,
         )
 
         return batch

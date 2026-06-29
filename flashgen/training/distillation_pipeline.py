@@ -701,7 +701,7 @@ class DistillationPipeline(TrainingPipeline):
 
     def faker_score_forward(self, training_batch: TrainingBatch) -> tuple[TrainingBatch, torch.Tensor]:
         with torch.no_grad(), set_forward_context(current_timestep=training_batch.timesteps,
-                                                  attn_metadata=training_batch.attn_metadata_vsa):
+                                                  attn_metadata=training_batch.attn_metadata):
             if self.training_args.simulate_generator_forward:
                 generator_pred_video = self._generator_multi_step_simulation_forward(training_batch)
             else:
@@ -858,9 +858,6 @@ class DistillationPipeline(TrainingPipeline):
             batch = self._normalize_dit_input(batch)
             batch = self._prepare_dit_inputs(batch)
             batch = self._build_attention_metadata(batch)
-            batch.attn_metadata_vsa = copy.deepcopy(batch.attn_metadata)
-            if batch.attn_metadata is not None:
-                batch.attn_metadata.VSA_sparsity = 0.0  # type: ignore
             batches.append(batch)
 
         self.optimizer.zero_grad(set_to_none=True)
@@ -872,7 +869,7 @@ class DistillationPipeline(TrainingPipeline):
                 batch_gen = self._clone_training_batch(batch)
 
                 with set_forward_context(current_timestep=batch_gen.timesteps,
-                                         attn_metadata=batch_gen.attn_metadata_vsa):
+                                         attn_metadata=batch_gen.attn_metadata):
                     if self.training_args.simulate_generator_forward:
                         generator_pred_video = self._generator_multi_step_simulation_forward(batch_gen)
                     else:
@@ -882,7 +879,7 @@ class DistillationPipeline(TrainingPipeline):
                     dmd_loss = self._dmd_forward(generator_pred_video=generator_pred_video, training_batch=batch_gen)
 
                 with set_forward_context(current_timestep=batch_gen.timesteps,
-                                         attn_metadata=batch_gen.attn_metadata_vsa):
+                                         attn_metadata=batch_gen.attn_metadata):
                     (dmd_loss / gradient_accumulation_steps).backward()
                 total_dmd_loss += dmd_loss.detach().item()
 
@@ -1339,11 +1336,9 @@ class DistillationPipeline(TrainingPipeline):
                 gc.collect()
                 current_platform.empty_cache()
             start_time = time.perf_counter()
-            current_vsa_sparsity = 0.0
 
             training_batch = TrainingBatch()
             self.current_trainstep = step
-            training_batch.current_vsa_sparsity = current_vsa_sparsity
 
             if (step >= self.training_args.ema_start_step) and \
                     (self.generator_ema is None) and (self.training_args.ema_decay > 0):

@@ -265,7 +265,6 @@ class ForwardBatch:
 @dataclass
 class TrainingBatch:
     current_timestep: int = 0
-    current_vsa_sparsity: float = 0.0
 
     # Dataloader batch outputs
     latents: torch.Tensor | None = None
@@ -298,7 +297,6 @@ class TrainingBatch:
     sigmas: torch.Tensor | None = None
     noise: torch.Tensor | None = None
 
-    attn_metadata_vsa: AttentionMetadata | None = None
     attn_metadata: AttentionMetadata | None = None
 
     # input kwargs
