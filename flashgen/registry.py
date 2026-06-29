@@ -127,7 +127,10 @@ def _register_configs() -> None:
         sampling_param_cls=None,
         pipeline_config_cls=FastWan2_1_T2V_480P_Config,
         workload_types=(WorkloadType.T2V, ),
-        hf_model_paths=["FastVideo/FastWan2.1-T2V-1.3B-Diffusers"],
+        hf_model_paths=[
+            "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+            "FastVideo/FastWan2.1-T2V-1.3B-Diffusers",
+        ],
         model_detectors=[lambda path: "wandmdpipeline" in path.lower()],
         model_family="wan",
         default_preset="fast_wan_t2v_480p",

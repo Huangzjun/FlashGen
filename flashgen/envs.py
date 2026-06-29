@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     FLASHGEN_TRACE_FUNCTION: int = 0
     FLASHGEN_ATTENTION_BACKEND: str | None = None
     FLASHGEN_WORKER_MULTIPROC_METHOD: str = "spawn"
-    FLASHGEN_TARGET_DEVICE: str = "cuda"
+    FLASHGEN_TARGET_DEVICE: str = "npu"
     MAX_JOBS: str | None = None
     NVCC_THREADS: str | None = None
     CMAKE_BUILD_TYPE: str | None = None
@@ -76,10 +76,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
 
     # ================== Installation Time Env Vars ==================
 
-    # Target device of Flashgen, supporting [cuda (by default),
-    # rocm, neuron, cpu, openvino]
+    # Target device of Flashgen. This fork keeps the NPU runtime path.
     "FLASHGEN_TARGET_DEVICE":
-    lambda: os.getenv("FLASHGEN_TARGET_DEVICE", "cuda"),
+    lambda: os.getenv("FLASHGEN_TARGET_DEVICE", "npu"),
 
     # Maximum number of compilation jobs to run in parallel.
     # By default this is the number of CPUs
