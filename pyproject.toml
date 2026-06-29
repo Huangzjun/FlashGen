@@ -1,0 +1,263 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flashgen"
+version = "0.1.7"
+description = "Flashgen NPU video generation runtime"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+]
+
+dependencies = [
+    # Core Libraries
+    "scipy==1.14.1",
+    "six==1.16.0",
+    "h5py==3.12.1",
+    "requests>=2.32.2",
+
+    # Machine Learning & Transformers
+    "transformers==4.57.3",
+    "tokenizers>=0.20.1",
+    "sentencepiece==0.2.0",
+    "timm==1.0.11",
+    "peft>=0.15.0",
+    "diffusers>=0.33.1",
+    "torch==2.11.0",
+    "torchvision",
+    "torchaudio",
+
+    # Acceleration & Optimization
+    "accelerate==1.0.1",
+
+    # Computer Vision & Image Processing
+    "opencv-python==4.10.0.84",
+    "pillow>=10.3.0",
+    "imageio==2.36.0",
+    "imageio-ffmpeg==0.5.1",
+    "einops",
+
+    # Experiment Tracking & Logging
+    "wandb>=0.21.0",
+    "loguru",
+    "test-tube==0.7.5",
+    
+    # Miscellaneous Utilities
+    "tqdm",
+    "pytest",
+    "PyYAML==6.0.1",
+    "protobuf>=5.28.3",
+    "gradio==5.32.0",
+    "moviepy>=2.0.0",
+    "flask",
+    "flask_restful",
+    "aiohttp",
+    "aiofiles",
+    "huggingface_hub",
+    "cloudpickle",
+    "omegaconf",
+
+    # System & Monitoring Tools
+    "gpustat",
+    "watch",
+    "remote-pdb",
+
+    # Packaging
+    "wheel",
+
+    # Training Dependencies
+    "torchdata",
+    "pyarrow",
+    "datasets==4.0.0",
+    "av",
+
+    # Preprocessing Dependencies
+    "torchcodec",
+    "ray>=2.49.1",
+    "ftfy==6.3.1",
+
+    # Job Runner
+    "fastapi==0.129.0",
+    "uvicorn==0.41.0"
+]
+
+[tool.uv]
+prerelease = "allow"
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+imagebind = { git = "https://github.com/facebookresearch/ImageBind.git", rev = "53680b02d7e37b19b124fa37bae4b6c98c38f5be" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[project.optional-dependencies]
+
+lint = [
+    "pre-commit==4.0.1",
+    "types-aiofiles",
+    "types-requests",
+]
+
+test = [
+    "av",
+    "pytorch-msssim==1.0.0",
+    "pytest",
+    "pandas",
+    "plotly",
+]
+
+# Eval extras. See flashgen/eval/README.md for which install path
+# covers which metrics. detectron2 (vbench color/object_class/etc.) is
+# CUDA-version-pinned and not cleanly pip-installable — install it
+# separately as documented in the README. decord has no aarch64 wheels
+# (upstream effectively unmaintained); it's split into its own extra so
+# the main eval extras install on ARM systems too. eval/io/video.py has
+# a PyAV fallback that covers the video-decode path without decord.
+eval-vbench     = ["openai-clip", "pyiqa", "easydict"]
+eval-physics-iq = []
+eval-audio = ["jiwer", "librosa", "pyloudnorm", "hear21passt", "audiobox_aesthetics", "imagebind", "pytorchvideo"]
+eval = [
+    "lpips", "ptlflow", "qwen-vl-utils",
+    "flashgen[eval-vbench]", "flashgen[eval-physics-iq]",
+]
+eval-fast-decode = ["decord"]
+eval-full = ["flashgen[eval]", "flashgen[eval-audio]", "qwen-omni-utils"]
+
+dev = [ "flashgen[lint]", "flashgen[test]", ]
+
+prompt-safety = [
+    "fasttext",
+]
+
+prompt-enhancer = [
+    "httpx",
+]
+
+streaming = [
+    "flashgen[prompt-enhancer]",
+    "flashgen[prompt-safety]",
+    "websockets",
+]
+
+dreamverse = [
+    "uvicorn[standard]==0.41.0",
+    "cerebras-cloud-sdk",
+    "openai>=1.40",
+]
+
+rocm = [
+    "amdsmi",
+]
+
+[project.scripts]
+flashgen = "flashgen.entrypoints.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["assets*", "docker*", "docs", "scripts*", "apps*"]
+
+[tool.wheel]
+exclude = ["assets*", "docker*", "docs", "scripts*", "apps*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "gpu: requires real GPU + model weights; skip in CI",
+]
+
+
+[tool.mypy]
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_calls = true
+check_untyped_defs = true
+follow_imports = "silent"
+
+[tool.codespell]
+# ``*/_vendored/*`` matches upstream-provenance files vendored under any
+# ``_vendored/`` subdir (project-wide convention; mirrors the
+# ``_``-prefixed auto-discovery skip).
+skip = "./data,./wandb,ui/package-lock.json,*/_vendored/*"
+# "tread" matches daVinci-MagiHuman's acronym "TReAD" (Token Routing and
+# Early Drop). codespell lowercases ignore-words entries, so the single
+# lowercase form silences all case variants.
+ignore-words-list = "tread,passt"
+
+[tool.ruff]
+# Allow lines to be as long as 120.
+line-length = 120
+extend-exclude = [
+    # Upstream submodules under flashgen/third_party/ are not our style
+    # territory; modern-dep compat lives as runtime shims in our metric
+    # __init__.py files.
+    "flashgen/third_party/**",
+]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    # "I",
+    "G",
+]
+ignore = [
+    # star imports
+    "F405", "F403",
+    # lambda expression assignment
+    "E731",
+    # Loop control variable not used within loop body
+    "B007",
+    # f-string format
+    "UP032",
+    # line too long
+    "E501",
+]
+
+[tool.yapf]
+column_limit = 120
+
+[tool.isort]
+line_length = 120
+use_parentheses = true
+skip_gitignore = true
+
+
+[project.urls]
+Repository = "https://github.com/hao-ai-lab/Flashgen"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = "fastvideo"
+DisplayName = "Flashgen"
+Icon = "https://raw.githubusercontent.com/hao-ai-lab/Flashgen/main/comfyui/assets/icon_simple.svg"
