@@ -285,7 +285,8 @@ class TorchProfilerController:
     Enabling an existing region from the command line::
 
         FLASHGEN_TORCH_PROFILE_REGIONS=model_loading,training_dit \
-        python flashgen/training/wan_training_pipeline.py ...
+        torchrun --nproc_per_node=8 -m flashgen.train.entrypoint.train \
+            --config scripts/distill/wan_dmd_npu.yaml
 
     Wrapping a code block in a custom region::
 

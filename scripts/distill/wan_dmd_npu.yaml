@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: Apache-2.0
+
+models:
+  student:
+    _target_: flashgen.train.models.wan.wan.WanModel
+    init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    trainable: true
+    flow_shift: 8.0
+  teacher:
+    _target_: flashgen.train.models.wan.wan.WanModel
+    init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    trainable: false
+    disable_custom_init_weights: true
+    flow_shift: 8.0
+  critic:
+    _target_: flashgen.train.models.wan.wan.WanModel
+    init_from: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+    trainable: true
+    disable_custom_init_weights: true
+    flow_shift: 8.0
+
+method:
+  _target_: flashgen.train.methods.distribution_matching.dmd2.DMD2Method
+  rollout_mode: data_latent
+  generator_update_interval: 5
+  dmd_denoising_steps: [1000, 757, 522]
+  warp_denoising_step: false
+  real_score_guidance_scale: 3.5
+  fake_score_learning_rate: 0.0
+  fake_score_lr_scheduler: constant
+  fake_score_betas: [0.9, 0.999]
+
+training:
+  model_path: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+  dit_precision: fp32
+  distributed:
+    num_gpus: 8
+    tp_size: 1
+    sp_size: 1
+    hsdp_replicate_dim: 8
+    hsdp_shard_dim: 1
+    pin_cpu_memory: true
+  data:
+    data_path: mini_i2v_dataset/crush-smol_preprocessed/combined_parquet_dataset/
+    preprocessed_data_type: t2v
+    train_batch_size: 1
+    dataloader_num_workers: 0
+    training_cfg_rate: 0.0
+    seed: 1024
+    num_height: 448
+    num_width: 832
+    num_frames: 77
+    num_latent_t: 20
+  optimizer:
+    learning_rate: 2.0e-6
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+    lr_scheduler: constant
+    lr_warmup_steps: 0
+    lr_num_cycles: 0
+    lr_power: 0.0
+    min_lr_ratio: 0.5
+  loop:
+    max_train_steps: 30000
+    gradient_accumulation_steps: 8
+  checkpoint:
+    output_dir: outputs_dmd/wan_finetune
+    resume_from_checkpoint: ""
+    training_state_checkpointing_steps: 400
+    checkpoints_total_limit: 3
+  tracker:
+    project_name: Wan_distillation
+    run_name: ""
+  model:
+    weighting_scheme: uniform
+    logit_mean: 0.0
+    logit_std: 1.0
+    mode_scale: 1.0
+    precondition_outputs: false
+    enable_gradient_checkpointing_type: null
+    min_timestep_ratio: 0.02
+    max_timestep_ratio: 0.98
+  vsa:
+    sparsity: 0.0
+    cache_tile_buf: false
+
+pipeline:
+  flow_shift: 8.0
+  dit_precision: fp32
+  vae_precision: bf16
+  dmd_denoising_steps: [1000, 757, 522]
+
+callbacks:
+  grad_clip:
+    max_grad_norm: 1.0
+    log_grad_norms: true

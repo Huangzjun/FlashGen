@@ -1,9 +1,5 @@
-from .distillation_pipeline import DistillationPipeline
-from .training_pipeline import TrainingPipeline
-from .wan_distillation_pipeline import WanDistillationPipeline
+# SPDX-License-Identifier: Apache-2.0
+# Shared training utilities (training_utils, checkpointing_utils, etc.).
+# Legacy monolithic pipeline entrypoints were removed; use flashgen.train instead.
 
-__all__ = [
-    "TrainingPipeline",
-    "DistillationPipeline",
-    "WanDistillationPipeline",
-]
+__all__: list[str] = []

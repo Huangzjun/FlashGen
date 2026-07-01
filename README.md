@@ -20,6 +20,6 @@ Launch distributed DMD distillation via `torchrun`:
 bash scripts/distill/v1_distill_dmd_wan.sh
 ```
 
-Entry point: `flashgen/training/wan_distillation_pipeline.py`.
+Entry point: `flashgen.train.entrypoint.train` (YAML config via `scripts/distill/v1_distill_dmd_wan.sh`).
 
 See `docs/架构设计.md` for the full architecture.
